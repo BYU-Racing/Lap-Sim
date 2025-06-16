@@ -112,6 +112,7 @@ def track_builder(track):
   # Convert to arrays
   x = np.array(x_list)
   y = np.array(y_list)
+  #to make it a closed circuit uncomment these
   #x[-1]=0
   #y[-1]=0
 
@@ -161,7 +162,7 @@ def derivatives(state,t,Cf_inst,Cr_inst,delta,a,b,Iz,m,ax,F_drag):
 
 
 def run_simulation(state, states, velocities, time, s, ds, curvature, desired_delta, popt, m, rho, A, Cd, Cl, g, a, b, Iz, mu,
-                    ay_max_limit, ax_brake, gear_ratio, tire_radius,front_params,rear_params,model):
+                    ay_max_limit, ax_brake, gear_ratio, tire_radius,front_params,rear_params,model,C_rr):
     """
     Runs the vehicle simulation along the track.
 
@@ -198,18 +199,29 @@ def run_simulation(state, states, velocities, time, s, ds, curvature, desired_de
             time: List of simulation time points.
             laptime: Estimated laptime.
     """
-
+    # Precompute max speed from curvature (based on lateral grip limit)
+    v_max_profile = []
+    tolerance=2.5e-10
+    for i in range(len(curvature)):
+        if -tolerance<curvature[i]<tolerance:
+            curvature[i]=0
+        if curvature[i] == 0:
+            v_max = 100.0  # arbitrary high value on straights
+        else:
+            ay_max = min(mu * g, ay_max_limit)
+            v_max = np.sqrt(ay_max / abs(curvature[i]))
+        v_max_profile.append(v_max)
 
     for i in range(1, len(s)):
         delta = desired_delta[i]
 
         vx = state[0]
         vy=state[1]
-        #r=state[2]
-
         v_total=np.sqrt(vx**2 + vy**2)
+        
         F_drag = 0.5 * rho * A * Cd * v_total**2
         F_down = -0.5 * rho * A * Cl * v_total**2
+        F_rr=C_rr*m*g*2
 
         # Total Normal force
         Fz= (m* g + F_down)/2
@@ -221,22 +233,33 @@ def run_simulation(state, states, velocities, time, s, ds, curvature, desired_de
 
         ay_desired=np.sign(ay_desired_track)*min(abs(ay_desired_track), ay_tire_limit,ay_max_limit)
 
-        ax_available = np.sqrt(max((ay_tire_limit)**2 - ay_desired**2, 0))
+        ax_available = np.sqrt(ay_tire_limit)**2 - ay_desired**2)
 
         current_rpm=(vx/tire_radius)*gear_ratio*(60/(2*np.pi))
 
         available_torque=model(current_rpm,*popt)
 
         F_engine=available_torque*gear_ratio/tire_radius
+        F_total=F_engine-F_drag-F_rr
 
-        ax_available_engine=F_engine/m
+        ax_available_engine=F_total/m
+        # --- Lookahead braking ---
+        lookahead_dist = 12.0  # meters
+        s_current = s[i]
+        lookahead_idx = i
+        
+        while lookahead_idx < len(s) and s[lookahead_idx] < s_current + lookahead_dist:
+            lookahead_idx += 1
+        lookahead_idx = min(lookahead_idx, len(s) - 1)
+        v_lookahead_target = min(v_max_profile[i:lookahead_idx + 1])
 
-
-        # Determine acceleration / braking
-        if vx < 30:
-            ax = min(ax_available_engine, ax_available)
+        # Decide acceleration or braking
+        if vx > v_lookahead_target:
+            # Need to slow down to make the curve
+            ax = min(-ax_brake, -np.sqrt(ay_tire_limit**2 - ay_desired**2))
         else:
-            ax = max(ax_brake, -ax_available)
+            # Accelerate, but stay within grip limit
+            ax = np.clip(ax_available_engine, ax_brake, ax_available)
 
         dt = ds / max(vx, 0.1)  # Avoid zero division
         t_span=[0,dt]
