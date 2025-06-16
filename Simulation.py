@@ -14,7 +14,7 @@ tire_radius=.203 #meters
 
 ax_brake = -1.4*g  # Max braking deceleration (m/s^2)
 ay_max_limit=1.5*g #max lateral acceleration (m/s^2)
-
+C_rr=.015 #rolling resistance coefficient
 
 # --- Cornering Stiffness ---
 data = np.array(pd.read_csv('cornering_stiffness_vs_latg.csv'))
@@ -30,8 +30,8 @@ rear_params = fit_cornering_stiffness(latg_data, Rear_data)
 # --- Aerodynamic parameters ---
 rho = 1.225      # Air density (kg/m^3)
 A = 2.2          # Frontal area (m^2)
-Cd = 0.75
-Cl = -1.5        # Negative lift = downforce
+Cd = 0.6
+Cl = -1      # Negative lift = downforce
 
 
 #--- motor data---
@@ -55,7 +55,7 @@ states, velocities, time, laptime = run_simulation(
     s, ds, curvature, desired_delta, params,
     m, rho, A, Cd, Cl, g, a, b, Iz, mu,
     ay_max_limit, ax_brake, gear_ratio, tire_radius,
-    front_params, rear_params,model
+    front_params, rear_params,model,C_rr
 )
 
 #---Laptime---
