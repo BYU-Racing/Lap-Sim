@@ -1,10 +1,20 @@
 # Lap-Sim
-The lap sim currently operates on a bicyle model. Assuming the same slip angle ,2 wheels, and no load transfer. It does however account for continuously changing cornering stiffness, aerodynamics, and motor torque. 
-I am working on transitioning to a car model to allow for different slip angles and load transfer
+The lap sim currently operates on a modified bicycle model. Accounting for 4 different slip angles, and front/back load transfer.It also accounts for continuously changing cornering stiffness, aerodynamics, and motor torque. 
 
-In order to run it you will need a track, motor data, and cornering stiffness CSVs. I have provided them in the repo,or you can make your own following the data as templates.
+Before you can run the code, you will need the CSVs provided in the repo,or you can make your own following the data as templates.
+You will need atleast 1 track, the cornering stiffness, and the motor vs. torque in order to simulate a lap.
 
-The track will display before the simulation runs. You must close that out before the simulation will calculate the laptime.
+The vehicle parameters are included in the vehicle setup file. The parameters included are for the 2025 car. Any changes to those would currently need to be hard coded into the vehicle setup. I am working on defining them in a slightly different way to allow easier chanigng of parameters. 
 
-The laptime is printed out before a velocity profile and a speed track map are displayed. 
-I am working on including additional information with those as well. 
+I have included the option for sectors within a track. These will need to be defined as a start and end point in order for the visualization to work properly. 
+Ex. (0.0,150 , 300) would make 2 sectors one from 0 to 150 and another from 150 to 300.
+The system can handle as many as you want but very small sectors aren't very useful. Additionally you could put no sectors and the code would work just fine.
+
+Currently the simulation only simulates 1 lap of a given track. In order to simulate multiple laps you would have to ensure the track is closed, as well as passing the final velocities into the run_simulation function for each desired lap. I am working on making a function to do this for you. 
+With each simulation it will print any sector times as well as the final laptime. There is also a plot_simulation_results function to display a more detailed account of the simulation.
+I have also included some code to compare 2 or more simulations, although the results only really compare the velocites. 
+
+The human factor is a little confusing but essentially the value (can be anything from .000000001 to 1) determmines the minimum percentage of the acceleration / braking delay. The simulation will then randomly choose a number between that minimum and the max (1) to determine the delay. 
+ex. human_factor=1 would be a perfect simulation, with perfect acceleration/ braking. While human_factor=.5 would be a simulation that assumes the driver is atleast able to match 50% of perfect acceleration/braking.
+
+There are a couple of debugging functions inlcuded in the run simulation file. Generally speaking these things shouldnt be an issue, but just to double check some things. 
