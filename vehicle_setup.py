@@ -55,6 +55,7 @@ class TrackData:
     def __init__(self, filename:str,vehicle:VehicleModel,v_max_straight:float =100.0,tolerance=2.5e-10
                  ,sector_boundaries=None):
         self.filename=filename
+        sef.track_type = detect_track_type(self.filename)
         self.vehicle=vehicle
         self.mu=vehicle.general.mu
         self.g=vehicle.general.g
