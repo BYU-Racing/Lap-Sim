@@ -77,3 +77,29 @@ class TrackData:
                 self.v_max_profile.append(self.v_max_straight)
             else:
                 self.v_max_profile.append(np.sqrt(ay_max / abs(k)))
+
+#%% Results Setup
+extracted_tables = extract_text_from_pdf("fsae_ev_2024_results.pdf") #or whatever the name of the results are
+
+track_config = {
+    "accel": {
+        "params": (10, 15, 2), #these numbers represent the page number, coulmn of data to record and any rows to skip. They will need to be adjusted if using a different results pdf
+        "points_func": acceleration_points,
+        "max_points": 100
+    },
+    "skid": {
+        "params": (13, 19, 2),
+        "points_func": skidpad_points,
+        "max_points": 75
+    },
+    "auto": {
+        "params": (15, 19, 2),
+        "points_func": autocross_points,
+        "max_points": 125
+    },
+    "endur": {
+        "params": (18, 8, 1),
+        "points_func": endurance_max_points,
+        "max_points": 275
+    }
+}
