@@ -36,7 +36,7 @@ class Aero:
     def __init__(self):
         self.A=2.224 #frontal area
         self.Cd=.6 #normal is .6 
-        self.Cl=-1 #drag and lift coefficients. Negative Cl= downforce
+        self.Cl=-3 #drag and lift coefficients. Negative Cl= downforce
 
 class Motor:
     def __init__(self):
@@ -55,7 +55,7 @@ class TrackData:
     def __init__(self, filename:str,vehicle:VehicleModel,v_max_straight:float =100.0,tolerance=2.5e-10
                  ,sector_boundaries=None):
         self.filename=filename
-        sef.track_type = detect_track_type(self.filename)
+        self.track_type=detect_track_type(self.filename)
         self.vehicle=vehicle
         self.mu=vehicle.general.mu
         self.g=vehicle.general.g
@@ -79,8 +79,8 @@ class TrackData:
             else:
                 self.v_max_profile.append(np.sqrt(ay_max / abs(k)))
 
-#%% Results Setup
-extracted_tables = extract_text_from_pdf("fsae_ev_2024_results.pdf") #or whatever the name of the results are
+#%% Results setup 
+extracted_tables = extract_text_from_pdf("fsae_ev_2024_results.pdf")
 
 track_config = {
     "accel": {
