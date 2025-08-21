@@ -19,32 +19,32 @@ sector_boundaries=[0.0,300,400,500,700,1025] #when each sector starts/ends. Kind
 track=TrackData('2024 Endurance.csv',vehicle,sector_boundaries=sector_boundaries)#or whatever the name of the track file is
 
 #---Setup---
-state = np.array([0.0, 0.0, 0.0])  # Initial state [vx, vy, r (yaw rate)]
-states = [state]
-velocities = [state[0]]
+inital_state = np.array([0.0, 0.0, 0.0])  # Initial state [vx, vy, r (yaw rate)]
+states = [inital_state]
+velocities = [inital_state[0]]
 time = [0]
 
-
 #---Run Simulation---
-human_factor=1 #the minimum percent of ideal. Currently 100% or perfectly ideal
-if track.track_type!= 'endur':
-    states1, velocities1, time1, laptime1, sector_times = run_simulation_car(
-        state, states, velocities, time, track, vehicle, human_factor)
+human_factor=.75
+if track.track_type == 'endur':
+    states1, velocities1, time1, laptime1, sector_times,ax_actual = simulate_lap(
+    inital_state, states, velocities, time, track, vehicle, human_factor)
 
     points,max_points,place=calculate_result(track,track_config,extracted_tables,laptime1)
-    plot_simulation_results(track,velocities1,sector_boundaries,sector_times,points,max_points,place)
+    plot_simulation_results(track, velocities1, sector_boundaries, sector_times, points, max_points, place)
 
 else:
-    states1,velocities1,time1,laptime1,sector_times= simulate_endurance(
-        inital_state,states,velocities,time,track,vehicle,human_factor)
-
-    points,max_points,place = calculate_result(track,track_config,extracted_tables,np.sum(laptime1))
+    states1, velocities1, time1, laptime1, sector_times = simulate_endurance(
+        inital_state, states,velocities,time,track,vehicle,human_factor)
+    
+    points,max_points,place=calculate_result(track,track_config,extracted_tables,np.sum(laptime1))
 
     print(f'Points Scored: {points:.2f}/{max_points}')
     print(f'Expected Place: {place}')
 
 
 #%%---Comparing Results---
+
 '''
 state = np.array([0.0, 0.0, 0.0])  # Initial state [vx, vy, r (yaw rate)]
 states = [state]
