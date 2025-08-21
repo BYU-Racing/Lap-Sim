@@ -2,9 +2,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.optimize as op
-from scipy.integrate import odeint
+from scipy.integrate import solve_ivp,odeint
 import math
-
+import pdfplumber
+import os
 #%% Vehicle parameters
 # Define fitting sub-functions
 def quadratic_fit(x, a, b, c):
@@ -55,7 +56,7 @@ def plot_motor_fit(motor_data, fit_params, model):
 
 def fit_cornering_stiffness(latg,Fy_data,initial_guess=(.1,1,0)):
     popt, _ = op.curve_fit(quadratic_fit,latg, Fy_data, initial_guess)
-    return popt *2.2 #relates testing method to track surface
+    return popt*2.2
 
 def plot_cornering_stiffness(datasets,labels,fit_params,title='Cornering Stiffness fit'):
     plt.figure(figsize=(10,6))
@@ -68,7 +69,6 @@ def plot_cornering_stiffness(datasets,labels,fit_params,title='Cornering Stiffne
     plt.ylabel('Cornering Force')
     plt.title(title)
     plt.legend()
-    #plt.text(0.05, 0.1, eq, transform=plt.gca().transAxes)
     plt.grid(True)
     plt.show()
 
@@ -87,6 +87,7 @@ def detect_track_type(csv_path):
          if word in filename:
             return key
    return None
+
 
 def track_builder(track,sector_boundaries):
   # --- Initialize track ---
@@ -148,7 +149,7 @@ def track_builder(track,sector_boundaries):
 
 #%% Simulation functions
 
-def car_model_derivatives(state, t, Cf_inst, Cr_inst, steering_angle, a, b, Iz, m, ax, F_drag, track_width):
+def car_model_derivatives(state,t, Cf_inst, Cr_inst, steering_angle, a, b, Iz, m, ax, F_drag, track_width):
     vx, vy, r = state
     vx=np.clip(vx,0.1,200)
 
@@ -181,21 +182,22 @@ def car_model_derivatives(state, t, Cf_inst, Cr_inst, steering_angle, a, b, Iz, 
     Fyr = (Fyr_left + Fyr_right)
 
     # Dynamics
-    dvx = ax - r * vy - F_drag / m
+    dvx = ax - (r * vy) - (F_drag / m)
+    #print(dvx,ax,r,vy,F_drag/m)
     dvy = (Fyf + Fyr) / m + r * vx
     dr = (a * (Fyf_right + Fyf_left) - b * (Fyr_right + Fyr_left)+(track_width/2)*(Fyf_right-Fyf_left+Fyr_right-Fyr_left)) / Iz
     return [dvx, dvy, dr]
 
 
 # Update the simulation loop to use car model
-def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,ax_actual=0.0):
+def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,ax_actual=0):
+    '''Simulates a single lap around a given track'''
     s=track.s
     curvature=track.curvature
     ds=track.ds
     sector_list=track.sector_list
     sector_times={}
     current_sector=sector_list[0]
-    sector_start_time=time[0]
     v_max_profile=track.v_max_profile
     m=vehicle.general.m
     mu=vehicle.general.mu
@@ -221,12 +223,10 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
     human_factor=human_factor
     track_wdith=vehicle.suspension.track_width
 
-    vx_safe=.1 
+    vx_safe=.1 # This just ensures that the ay_desired_track is small enough to not become numerically unstable
     W=m*g
     response_time=.2 #delay between acceleration / braking input and actual acceleration / braking
     time_s=[0.0]
-
-
 
     for i in range(1, len(s)):
         human=np.random.uniform(human_factor,1)
@@ -269,22 +269,34 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
         dt =max( ds / max(vx, 0.1), 1e-4)
         t_start=time[-1]
         t_end=t_start+dt
-        t_span = [t_start, t_end]
-        
+        t_span = (t_start, t_end)
+
         ax_actual+=((ax_cmd-ax_actual)*dt/response_time)*human
 
         if current_sector not in sector_times:
             sector_times[current_sector]=0.0
         sector_times[current_sector]+=dt
 
+
         Cf_inst = quadratic_fit(ay_desired, front_params[0], front_params[1], front_params[2])
         Cr_inst = quadratic_fit(ay_desired, rear_params[0], rear_params[1], rear_params[2])
 
         steering_angle = l*ay_desired/ max(vx,.1)**2 #still bicycle model but the derivatives fixes it
+        '''
+        # sol=solve_ivp(fun=car_model_derivatives,
+            t_span=t_span,y0=state,method='LSODA',
+           args=(Cf_inst, Cr_inst, steering_angle, a, b, Iz, m, ax_actual, F_drag,track_wdith),
+           t_eval=[t_end]
+           )
+        state=sol.y[:,-1]
+        '''
         state = odeint(car_model_derivatives, state, t_span, args=(Cf_inst, Cr_inst, steering_angle, a, b, Iz, m, ax_actual, F_drag,track_wdith))[-1]
+        state[0] = max(state[0], 0.1) #temporary fix to avoid neagtive velocity
+
         states.append(state)
         velocities.append(state[0])
         time.append(t_end)
+        #print(velocities[-1],dt)
 
     clean_sectors={int(k):float(v) for k,v in sector_times.items()}
     for sector,t_sec in sorted(clean_sectors.items()):
@@ -294,7 +306,7 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
 
     print(f"Estimated Laptime: {laptime:.3f} seconds")
     return states, velocities, time, laptime,time_s, ax_actual
-    
+
 def simulate_endurance(state,states,velocities,time,track,vehicle,human_factor,total_laps=22,ax_actual=0.0):
     total_time = time[-1] if time else 0.0
     lap_times = []
@@ -312,10 +324,12 @@ def simulate_endurance(state,states,velocities,time,track,vehicle,human_factor,t
     print(f"\n=== Endurance Simulation Complete ===")
     print(f"Total time for {total_laps} laps: {total_time:.3f} seconds")
     print(f"Average lap time: {np.mean(lap_times):.3f} seconds")
-    
+
     return states, velocities, time, lap_times, all_sector_times
 
+
 #%% results
+
 def extract_text_from_pdf(pdf_path):
   tables=[]
   with pdfplumber.open(pdf_path) as pdf:
@@ -383,8 +397,6 @@ def endurance_max_points(min,your):
 
 def efficiency_factor(min_time,your_time,min_energy,your_energy):
   '''takes the min time, your time, min energy, and your energy and returns the efficiency factor for the efficiency event'''
-  max_time=1.45*min_time
-  max_energy=1.25*min_energy
 
   lap_min=22 #assuming fully completed endurance
   Co2_min=min_energy*.65 #converts kWh to Kg
@@ -413,6 +425,7 @@ def efficiency_points(min_time,your_time,min_energy,your_energy):
 
 def calculate_result(track,track_config,extracted_tables,laptime):
     config = track_config.get(track.track_type)
+    #laptime*=22
     if not config:
         raise ValueError(f"Unknown track type: {track.track_type}")
     
@@ -428,7 +441,7 @@ def calculate_result(track,track_config,extracted_tables,laptime):
        else:
           break
     return points, config["max_points"], place
-
+          
 def plot_simulation_results(track, velocities, sector_limits, sector_times, points, max_points, place):
     """
     Plots the velocity profile along the track and the track layout
@@ -444,10 +457,10 @@ def plot_simulation_results(track, velocities, sector_limits, sector_times, poin
     s=track.s
     x=track.x
     y=track.y
-    
+
     fig, axs = plt.subplots(1,3,figsize=(13,5),gridspec_kw={'width_ratios':[5,1,5]})
-    Batery=100
-    Temp=20
+    Batery="--"
+    Temp="--"
 
     # --- Subplot 1: Velocity Profile ---
     axs[0].plot(s, velocities, color='green')
@@ -482,11 +495,13 @@ def plot_simulation_results(track, velocities, sector_limits, sector_times, poin
     fig.text(0.5,.5, summary_text,fontsize=10,ha='center',va='center',bbox=dict(facecolor='white',edgecolor='black'))
 
     battery_text=f"""Bat. Useage :{Batery} kw
-    Max Temperature :{Temp:.2f} C """
+    Max Temperature :{Temp} C """
     fig.text(.5,.75,battery_text, fontsize=10,ha='center',va='center',bbox=dict(facecolor='white',edgecolor='black'))
 
     placement_text=f"""Expected Place :{place}
     Points: {points:.2f}/{max_points}"""
     fig.text(.5,.25,placement_text, fontsize=10,ha='center',va='center',bbox=dict(facecolor='white',edgecolor='black'))
     plt.tight_layout()
+    plt.savefig('yay')
     plt.show()
+
