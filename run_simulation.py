@@ -8,8 +8,9 @@ general=CarData()
 susp=Suspension()
 aero=Aero()
 motor=Motor()
+batt=Batt()
 
-vehicle=VehicleModel(general,susp,aero,motor)
+vehicle=VehicleModel(general,susp,aero,motor,batt)
 
 #--- Track---
 sector_boundaries=[0.0,300,400,500,700,1025] #when each sector starts/ends. Kind of a pain since you have to manually decide where they go.
@@ -27,11 +28,12 @@ time = [0]
 #---Run Simulation---
 human_factor=.75
 if track.track_type == 'endur':
-    states1, velocities1, time1, laptime1, sector_times,ax_actual = simulate_lap(
+    states1, velocities1, time1, laptime1, sector_times,ax_actual,energy_sectors,batt = simulate_lap(
     inital_state, states, velocities, time, track, vehicle, human_factor)
 
     points,max_points,place=calculate_result(track,track_config,extracted_tables,laptime1)
     plot_simulation_results(track, velocities1, sector_boundaries, sector_times, points, max_points, place)
+    Plot_battery_usage(track, velocities, batt,sector_boundaries,sector_times,energy_sectors)
 
 else:
     states1, velocities1, time1, laptime1, sector_times = simulate_endurance(
@@ -41,8 +43,6 @@ else:
 
     print(f'Points Scored: {points:.2f}/{max_points}')
     print(f'Expected Place: {place}')
-
-
 #%%---Comparing Results---
 
 '''
@@ -94,3 +94,4 @@ plt.ylabel('Y (m)')
 plt.legend()
 plt.show()
     '''
+
