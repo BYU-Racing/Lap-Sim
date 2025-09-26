@@ -39,6 +39,38 @@ def fit_motor_curve(motor_data, transition_point1=1000, transition_point2=5000):
     popt, _ = op.curve_fit(model, RPM, Torque, initial_guess)
     return popt, model
 
+def torque_to_closest_rpm(torque_value, popt, model, rpm_bounds=(0, 7000)):
+    """
+    Find the RPM that gives torque closest to the requested value.
+    """
+    def objective(rpm):
+        return abs(model(rpm, *popt) - torque_value)
+    
+    result = op.minimize_scalar(objective, bounds=rpm_bounds, method="bounded")
+    if result.success:
+        return result.x  # return RPM
+    else:
+        return None
+    
+def calculate_battery_usage(m,ax_actual,F_drag,F_rr,tire_radius,popt,model,gear_ratio,batt):
+    F_req=m*abs(ax_actual)+F_drag+F_rr
+    T_wheel=F_req*tire_radius
+    T_motor=T_wheel/(.96*gear_ratio) # accounting for powertrain losses
+    rpm_motor=torque_to_closest_rpm(T_motor,popt,model)
+    P_mech=(rpm_motor*2*np.pi/60)
+    P_elec=P_mech/(.90*.95)#accounting for motor and inverter efficiency
+    energy=P_elec *(.01 / 3600) #converts to Wh
+    energy/=1000 #converts to kWh
+
+    if ax_actual>0:
+        batt-=energy
+    else:
+        energy*=-.6 #assuming % regained from regen
+        batt-=energy
+
+    return energy , batt
+
+
 def plot_motor_fit(motor_data, fit_params, model):
     RPM = motor_data['RPM'].values
     Torque = motor_data['Torque'].values
@@ -222,11 +254,14 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
     Iz=vehicle.suspension.Iz
     human_factor=human_factor
     track_wdith=vehicle.suspension.track_width
+    batt=[vehicle.batt.kWh]
 
     vx_safe=.1 # This just ensures that the ay_desired_track is small enough to not become numerically unstable
     W=m*g
     response_time=.2 #delay between acceleration / braking input and actual acceleration / braking
     time_s=[0.0]
+    energy_sectors={}
+    energy_s=[0.0]
 
     for i in range(1, len(s)):
         human=np.random.uniform(human_factor,1)
@@ -247,9 +282,10 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
 
         current_rpm = (vx / tire_radius) * gear_ratio * (60 / (2 * np.pi))
         available_torque = model(current_rpm, *popt)
-        F_engine = available_torque * gear_ratio / tire_radius
-        F_total = F_engine - F_drag - F_rr
-        ax_available_engine = F_total / m
+        F_motor = available_torque * gear_ratio / tire_radius
+        F_total = F_motor - F_drag - F_rr
+        ax_available_motor = F_total / m
+
         
         lookahead_dist = 7 #how far ahead it will consider braking (m)
         s_current = s[i]
@@ -264,7 +300,7 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
         if vx > v_lookahead_target:
             ax_cmd = min(-ax_brake, -ax_available)
         else:
-            ax_cmd = np.clip(ax_available_engine, -ax_brake, ax_available)
+            ax_cmd = np.clip(ax_available_motor, -ax_brake, ax_available)
 
         dt =max( ds / max(vx, 0.1), 1e-4)
         t_start=time[-1]
@@ -273,39 +309,45 @@ def simulate_lap(state, states, velocities, time, track, vehicle, human_factor,a
 
         ax_actual+=((ax_cmd-ax_actual)*dt/response_time)*human
 
+        #Battery useage
+        en, bat = calculate_battery_usage(m,ax_actual,F_drag,F_rr,tire_radius,popt,model,gear_ratio,batt[-1])
+        batt.append(bat)
+
+
         if current_sector not in sector_times:
             sector_times[current_sector]=0.0
         sector_times[current_sector]+=dt
 
+        if current_sector not in energy_sectors:
+            energy_sectors[current_sector]=0.0
+        energy_sectors[current_sector]+=en
 
         Cf_inst = quadratic_fit(ay_desired, front_params[0], front_params[1], front_params[2])
         Cr_inst = quadratic_fit(ay_desired, rear_params[0], rear_params[1], rear_params[2])
 
         steering_angle = l*ay_desired/ max(vx,.1)**2 #still bicycle model but the derivatives fixes it
-        '''
-        # sol=solve_ivp(fun=car_model_derivatives,
-            t_span=t_span,y0=state,method='LSODA',
-           args=(Cf_inst, Cr_inst, steering_angle, a, b, Iz, m, ax_actual, F_drag,track_wdith),
-           t_eval=[t_end]
-           )
-        state=sol.y[:,-1]
-        '''
         state = odeint(car_model_derivatives, state, t_span, args=(Cf_inst, Cr_inst, steering_angle, a, b, Iz, m, ax_actual, F_drag,track_wdith))[-1]
-        state[0] = max(state[0], 0.1) #temporary fix to avoid neagtive velocity
+        state[0] = max(state[0], 0.1)
 
         states.append(state)
         velocities.append(state[0])
         time.append(t_end)
-        #print(velocities[-1],dt)
 
     clean_sectors={int(k):float(v) for k,v in sector_times.items()}
     for sector,t_sec in sorted(clean_sectors.items()):
         print(f"sector {sector}: {t_sec:.3f} seconds")
         time_s.append(t_sec)
+
+    clean_energy={int(k):float(v) for k,v in energy_sectors.items()}
+    for sector,eng_use in sorted(clean_energy.items()):
+        energy_s.append(eng_use)
+
     laptime=np.sum(time_s)
+    total_energy=sum(energy_s)
 
     print(f"Estimated Laptime: {laptime:.3f} seconds")
-    return states, velocities, time, laptime,time_s, ax_actual
+    print(f"Energy Usage :{total_energy:.3f} kilo watt hours")
+    return states, velocities, time, laptime,time_s, ax_actual,energy_s, batt
 
 def simulate_endurance(state,states,velocities,time,track,vehicle,human_factor,total_laps=22,ax_actual=0.0):
     total_time = time[-1] if time else 0.0
@@ -405,7 +447,7 @@ def efficiency_factor(min_time,your_time,min_energy,your_energy):
   lap_yours=22 #assuming fully completed endurance
 
   factor=(min_time/lap_min)/(your_time/lap_yours) * (Co2_min/lap_min)/(Co2_yours/lap_yours)
-  factor=round(factor,3)
+  factor=round(factor,4)
   return factor
 
 def efficiency_points(min_time,your_time,min_energy,your_energy):
@@ -484,6 +526,7 @@ def plot_simulation_results(track, velocities, sector_limits, sector_times, poin
         idx=(np.abs(s-boundary)).argmin()
         axs[2].plot(x[idx],y[idx],marker='o',color='red',markersize=6)
         axs[2].text(x[idx],y[idx],i)
+        
 
     # Add colorbar and summary text
     fig.colorbar(sc, ax=axs[2], label='Speed (m/s)')
@@ -494,7 +537,7 @@ def plot_simulation_results(track, velocities, sector_limits, sector_times, poin
     axs[1].axis('off')
     fig.text(0.5,.5, summary_text,fontsize=10,ha='center',va='center',bbox=dict(facecolor='white',edgecolor='black'))
 
-    battery_text=f"""Bat. Useage :{Batery} kw
+    battery_text=f"""Bat. Useage :{Batery} kWh
     Max Temperature :{Temp} C """
     fig.text(.5,.75,battery_text, fontsize=10,ha='center',va='center',bbox=dict(facecolor='white',edgecolor='black'))
 
@@ -505,3 +548,40 @@ def plot_simulation_results(track, velocities, sector_limits, sector_times, poin
     plt.savefig('yay')
     plt.show()
 
+def Plot_battery_usage(track, velocities, batt,sector_limits,sector_times,energy_sectors):
+    fig, axs = plt.subplots(1,3,figsize=(13,5),gridspec_kw={'width_ratios':[5,1,5]})
+    s=track.s
+    x=track.x
+    y=track.y
+
+    # --- Subplot 1: Battery Usage ---
+    axs[0].plot(s, batt, color='green')
+    axs[0].set_title('Battery Usage Along the Track')
+    axs[0].set_xlabel('Track Position (m)')
+    axs[0].set_ylabel('Battery Power (kWh)')
+    axs[0].grid(True)
+    for i,boundary in enumerate(sector_limits):
+        axs[0].axvline(x=boundary, color='red',linestyle='--',linewidth=1)
+        axs[0].text(boundary-25,min(batt),f'Sector {i}',rotation=90)
+        axs[0].text(boundary-30,max(batt)-.02,f'{energy_sectors[i]:.3f} kWh',rotation=90)
+
+    # --- Subplot 2: Track Layout with Velocity Colormap ---
+    norm = plt.Normalize(min(velocities), max(velocities))
+    cmap = plt.cm.viridis
+    sc = axs[2].scatter(x, y, c=velocities, cmap=cmap, norm=norm, s=5)
+    axs[2].set_title('Track Layout with Velocity Profile')
+    axs[2].set_xlabel('X (m)')
+    axs[2].set_ylabel('Y (m)')
+    for i,boundary in enumerate(sector_limits):
+        idx=(np.abs(s-boundary)).argmin()
+        axs[2].plot(x[idx],y[idx],marker='o',color='red',markersize=6)
+        axs[2].text(x[idx],y[idx],i)
+        
+    # Add colorbar and summary text
+    fig.colorbar(sc, ax=axs[2], label='Speed (m/s)')
+    summary=f"""Total Batery Usage={batt[0]-batt[-1]:.3f} kWh
+    Lap time: {np.sum(sector_times):.2f}"""
+    axs[1].axis('off')
+    fig.text(0.5,.5, summary,fontsize=10,ha='center',va='center',bbox=dict(facecolor='white',edgecolor='black'))
+    plt.savefig('yay1')
+    plt.show()
