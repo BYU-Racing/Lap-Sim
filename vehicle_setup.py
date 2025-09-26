@@ -11,7 +11,7 @@ class CarData:
         self.C_rr=0.015 #rolling resistance coefficinet
         self.tire_radius=0.203 #meters 
         self.ax_brake=1.4*self.g #max longitudianl braking
-        self.ay_max_limit=1.5*self.g #max lateral load allowed from tires
+        self.ay_max_limit=1.2*self.g #max lateral load allowed from tires
         self.m=200 #mass (kg)
 
 class Suspension:
@@ -36,20 +36,28 @@ class Aero:
     def __init__(self):
         self.A=2.224 #frontal area
         self.Cd=.6 #normal is .6 
-        self.Cl=-3 #drag and lift coefficients. Negative Cl= downforce
+        self.Cl=-1 #drag and lift coefficients. Negative Cl= downforce
 
 class Motor:
     def __init__(self):
         self.gear_ratio=4.14 #final drive ratio
         motor_data = pd.read_csv('208 motor data.csv')
         self.params, self.model = fit_motor_curve(motor_data) #find fit for motor data
+        
+class Batt:
+    def __init__(self):
+        self.V = 260 #Voltage (V)
+        self.I = 225 #Current (Amps)
+        self.kW = self.V*self.I / 1000 #Kilo watt
+        self.kWh= self.kW/9 #Kilo watt hours
 
 class VehicleModel:
-    def __init__(self,general:CarData,Suspension:Suspension, aero:Aero,motor:Motor):
+    def __init__(self,general:CarData,Suspension:Suspension, aero:Aero,motor:Motor,batt:Batt):
         self.general=general
         self.suspension=Suspension
         self.aero=aero
         self.motor=motor
+        self.batt=batt
 
 class TrackData:
     def __init__(self, filename:str,vehicle:VehicleModel,v_max_straight:float =100.0,tolerance=2.5e-10
@@ -104,3 +112,4 @@ track_config = {
         "max_points": 275
     }
 }
+
